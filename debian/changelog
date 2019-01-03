@@ -1,0 +1,11 @@
+lliurex-quota (0.1.1) xenial; urgency=medium
+
+  * Fix calling method
+
+ -- M.Angel Juan <m.angel.juan@gmail.com>  Wed, 25 Jul 2018 13:22:25 +0200
+
+lliurex-quota (0.1) xenial; urgency=medium
+
+  * Initial Release.
+
+ -- M.Angel Juan <m.angel.juan@gmail.com>  Fri, 20 Jul 2018 09:14:46 +0200
