@@ -1,0 +1,156 @@
+#!/usr/bin/env python
+
+import sys, os
+sys.path.insert(0,'/usr/share/n4d/python-plugins')
+from QuotaManager import QuotaManager
+
+import argparse
+import xmlrpclib
+
+if __name__=='__main__':
+    parser = argparse.ArgumentParser(description='Quota administration tool')
+    parser.add_argument('-u','--user',metavar='USER',nargs=1,help='User with classroom admin privileges')
+    parser.add_argument('-p','--password',metavar='PASSWORD',nargs=1,help='Password from user with classroom admin privileges')
+    parser.add_argument('-j','--json',metavar='',action='store_const',help='',const=True)
+    g = parser.add_mutually_exclusive_group(required=True)
+
+    g.add_argument('-co','--configure-serversync',metavar='',action='store_const',help='Configure server-sync to use quota system',const=True)
+    g.add_argument('-de','--deconfigure-serversync',metavar='',action='store_const',help='Deconfigure server-sync without quota system',const=True)
+
+    g.add_argument('-gs','--get-status',metavar='',action='store_const',help='Get status of lliurex-quota system',const=True)
+    g.add_argument('-en','--set-enabled',metavar='',action='store_const',help='Enables lliurex-quota',const=True)
+    g.add_argument('-di','--set-disabled',metavar='',action='store_const',help='Disables lliurex-quota',const=True)
+
+    g.add_argument('-iq','--start-quotas',metavar='',action='store_const',help='Start quota system',const=True)
+    g.add_argument('-eq','--stop-quotas',metavar='',action='store_const',help='Stop quota system',const=True)
+
+    g.add_argument('-cq','--show-configured-quotas',metavar='',action='store_const',help='Get current configured quotas',const=True)
+    g.add_argument('-ga','--get-current-quotas',metavar='',action='store_const',help='Get current applied quotas',const=True)
+
+    g.add_argument('-sq','--set-quota',metavar=('USER','QUOTAVALUE','MARGINVALUE'),nargs=3,help='Set quota for user')
+    g.add_argument('-gq','--get-quota',metavar='USER',nargs=1,help='Get quota for user')
+
+    args = parser.parse_args()
+    if ( args.user and not args.password ) or ( args.password and not args.user ):
+        print('Need user and password parameters')
+        sys.exit(1)
+
+    c = None
+    if args.user and args.password:
+        c = xmlrpclib.ServerProxy('https://localhost:9779')
+        auth = (args.user[0],args.password[0])
+        module = 'QuotaManager'
+    else:
+        qm = QuotaManager()
+
+    if args.configure_serversync:
+        if c is None:
+            print(qm.configure_net_serversync())
+        else:
+            arguments=(auth,module)
+            print(c.configure_net_serversync(*arguments))
+
+    if args.deconfigure_serversync:
+        if c is None:
+            print(qm.deconfigure_net_serversync())
+        else:
+            arguments=(auth,module)
+            print(c.deconfigure_net_serversync(*arguments))
+
+    if args.get_status:
+        if c is None:
+            print(qm.get_status())
+        else:
+            arguments=(auth,module)
+            print(c.get_status(*arguments))
+
+    if args.set_enabled:
+        if c is None:
+            print(qm.set_status(True))
+        else:
+            arguments=(auth,module,True)
+            print(c.set_status(*arguments))
+
+    if args.set_disabled:
+        if c is None:
+            print(qm.set_status(False))
+        else:
+            arguments=(auth,module,False)
+            print(c.set_status(*arguments))
+
+    if args.start_quotas:
+        if c is None:
+            print(qm.start_quotas())
+        else:
+            arguments=(auth,module)
+            print(c.start_quotas(*arguments))
+
+    if args.stop_quotas:
+        if c is None:
+            print(qm.stop_quotas())
+        else:
+            arguments=(auth,module)
+            print(c.stop_quotas(*arguments))
+
+    if args.show_configured_quotas:
+        ret = None
+        if c is None:
+            ret = qm.get_quotafile()
+        else:
+            arguments=(auth,module)
+            ret = c.get_quotafile(*arguments)
+        if args.json:
+            print ret
+        else:
+            for user in sorted([u for u in ret]):
+                a='{:15}'.format('quota')
+                b='{:15}'.format('margin')
+                print('{:20}{:15}{:10}{:15}'.format(user,a,' ',b))
+                a='{quota:>15}'.format(**ret[user])
+                b='{margin:>15}'.format(**ret[user])
+                print('{:10}{:15} {:10}{:15}'.format(' ',a,' ',b))
+            print('')
+
+    if args.get_current_quotas:
+        ret = None
+        if c is None:
+            ret=qm.get_quotas()
+        else:
+            arguments=(auth,module)
+            ret=c.get_quotas(*arguments)
+        if args.json:
+            print ret
+        else:
+            for user in sorted([u for u in ret]):
+                t1='{} {:>10} {:>10} {:>10} {:>10} {:>10}'.format('SPACE','status','used','soft','hard','grace')
+                t2='{} {:>10} {:>10} {:>10} {:>10} {:>10}'.format('FILES','status','used','soft','hard','grace')
+                print('{:20} {:>50} {:10} {:>50}'.format(user,t1,' ',t2))
+                a='{spacestatus:>10} {spaceused:>10} {spacesoftlimit:>10} {spacehardlimit:>10} {spacegrace:>10}'.format(**ret[user])
+                b='{filestatus:>10} {fileused:>10} {filesoftlimit:>10} {filehardlimit:>10} {filegrace:>10}'.format(**ret[user])
+                print('{:20} {:5} {:>50} {:10} {:5} {:>50} '.format(' ',' ',a,' ',' ',b))
+            print('')
+
+    if args.set_quota:
+        user,quota,margin = args.set_quota
+        if type(user) == type(list()):
+            user = user[0]
+        if type(quota) == type(list()):
+            quota = quota[0]
+        if type(margin) == type(list()):
+            margin = margin[0]
+        if c is None:
+            print(qm.set_userquota(user,quota,margin))
+        else:
+            arguments=(auth,module,user,quota,margin)
+            print(c.set_userquota(*arguments))
+
+    if args.get_quota:
+        user = args.get_quota
+        if type(user) == type(list()):
+            user = user[0]
+        if c is None:
+            print(qm.get_userquota(user))
+        else:
+            arguments=(auth,module,user)
+            print(c.get_userquota(*arguments))
+
