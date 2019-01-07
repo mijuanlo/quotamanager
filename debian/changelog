@@ -1,3 +1,9 @@
+lliurex-quota (0.1.2) bionic; urgency=medium
+
+  * Fix detection and bugfixes
+
+ -- root <root@lliurex>  Mon, 07 Jan 2019 12:32:03 +0100
+
 lliurex-quota (0.1.1) xenial; urgency=medium
 
   * Fix calling method
