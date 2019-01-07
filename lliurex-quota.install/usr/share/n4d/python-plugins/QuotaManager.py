@@ -108,6 +108,25 @@ class QuotaManager:
             pass
         return ret
 
+    def detect_nfs_mount(self,mount='/net/server-sync'):
+        try:
+            nfsmounts = subprocess.check_output(['findmnt','-J','-t','nfs'])
+            nfsmounts_obj = json.loads(nfsmounts)
+            parsed_nfsmounts = [ x.get('target') for x in nfsmounts_obj.get('filesystems',[]) ]
+            if mount and mount in parsed_nfsmounts:
+                return True
+            else:
+                return False
+        except Exception as e:
+            raise Exception('Error detecting nfs mount {}, {}'.format(mount,e))
+
+    def any_slave(self,ips=[]):
+        truncated = [ '.'.join(ip.split('.')[0:2]) for ip in ips ]
+        if '10.3' in truncated:
+            return True
+        else:
+            return False
+
     def detect_running_system(self):
         if self.type_client:
             return self.type_client
@@ -116,22 +135,38 @@ class QuotaManager:
             srv_ip = socket.gethostbyname('server')
         except:
             srv_ip = None
+
         #var_value = self.read_vars('SRV_IP')
         #if 'value' in var_value:
         #    var_value = var_value['value']
+
         iplist = [ ip.split('/')[0] for ip in ips ]
         type_client = None
-        if '10.3.0.254' in iplist:
+
+        if '10.3.0.254' in iplist: # it has a reserved master server address
             self.fake_client = True
             type_client = 'master'
-        elif srv_ip in iplist:
-            if self.check_ping('10.3.0.254'):
-                type_client = 'slave'
-            else:
+        elif srv_ip in iplist: # is something like a server, dns 'server' is assigned to me
+            if self.any_slave(iplist): # classroom range 10.3.X.X
+                if self.detect_nfs_mount(): # nfs mounted or not
+                    if self.check_ping('10.3.0.254'): # available
+                        type_client = 'slave'
+                        self.fake_client = False
+                    else: # not available
+                        raise Exception('Nfs master server is not reachable!')
+                else:
+                    self.fake_client = True
+                    type_client = 'independent'
+            else: 
                 self.fake_client = True
                 type_client = 'independent'
-        else:
+        elif srv_ip is not None: # dns 'server' is known but is not assigned to me, maybe i am a client
+            type_client = 'client'
+            self.fake_client = False
+        else: # 'server' dns is unknown
             type_client = 'other'
+            self.fake_client = True
+
         self.type_client = type_client
         return type_client
 
