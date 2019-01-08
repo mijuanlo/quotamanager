@@ -935,40 +935,48 @@ class QuotaManager:
         return value
 
     def check_quotas_status(self, status=None, device='all', quotatype='all'):
+        valid_types = ['user','group','project']
         if not status:
             raise Exception('Need valid status when check quotas, {}'.format(status))
-        if str(status).lower() not in ['on','off']:
-            raise Exception('Need valid status when check quotas, {}'.format(status))
+        for status_key in status:
+            if str(status[status_key]).lower() not in ['on','off']:
+                raise Exception('Need valid status when check {} quotas, {}'.format(status_key,status[status_key]))
         if quotatype == 'all':
-            typelist = ['user','group']
+            typelist = valid_types
         else:
-            if str(quotatype).lower() not in ['user','group']:
-                Exception('Not valid type to check quota on device')
+            if isinstance(quotatype,str):
+                if str(quotatype).lower() not in valid_types:
+                    Exception('Not valid type to check quota on device')
             else:
-                typelist = [str(quotatype).lower()]
+                if not isinstance(quotatype,list):
+                    raise Exception("Type '{}' not valid".format(quotatype))
+                typelist = [ str(t).lower() for t in quotatype if str(t).lower() in valid_types ]
+                if not typelist:
+                    raise Exception("Type '{}' not valid".format(quotatype))
+
         status_quotaon = self.check_quotaon()
-        if not status_quotaon:
+        if not status_quotaon: # empty, not configured quotas
             if status == 'off':
                 return True
             else:
                 raise Exception('No devices with quota found')
-        check = []
+        check = {}
         for key in typelist:
             if device == 'all':
                 for mount_path in status_quotaon[key]['mount']:
-                        if status_quotaon[key]['mount'][mount_path] != str(status).lower():
+                        if status_quotaon[key]['mount'][mount_path] != str(status[key]).lower():
                             return False
             else:
                 for typedev in status_quotaon[key]:
                     if str(os.path.normpath(device)) in status_quotaon[key][typedev].keys():
-                            check.append(status_quotaon[key][typedev][str(os.path.normpath(device))])
+                            check.setdefault(key,status_quotaon[key][typedev][str(os.path.normpath(device))])
                 if not check:
                     raise Exception('Device not found when trying to check quota status, {}'.format(device))
         if device != 'all':
             if len(check) != len(typelist):
                 return False
             for check_item in check:
-                if check_item != str(status).lower():
+                if check[check_item] != str(status[check_item]).lower():
                     return False
         return True
 
@@ -1012,7 +1020,7 @@ class QuotaManager:
                 raise Exception('Error unexpected output from quotaon, {}'.format(e))
         except Exception as e:
             raise Exception('Error checking quotaon {}'.format(e))
-        tmp = re.findall(r'(user|group) quota on (\S+) \((\S+)\) is (on|off)',out,re.IGNORECASE)
+        tmp = re.findall(r'(user|group|project) quota on (\S+) \((\S+)\) is (on|off)',out,re.IGNORECASE)
         out = {}
         for line in tmp:
             out.setdefault(line[0],{'mount':{},'device':{}})
@@ -1030,8 +1038,8 @@ class QuotaManager:
     def activate(self, type):
         scripts_path = '/usr/share/quota/'
         types = {
-                'quotaon': {'script': scripts_path + 'quotaon.sh', 'checker': self.check_quotas_status, 'args': 'on' }, 
-                'quotaoff': {'script': scripts_path + 'quotaoff.sh', 'checker': self.check_quotas_status, 'args': 'off' }, 
+                'quotaon': {'script': scripts_path + 'quotaon.sh', 'checker': self.check_quotas_status, 'args': {'status':{'user':'on','group':'on','project':'off'},'device':'all','quotatype':['user','group']} },     # todo: check/handle project quotas
+                'quotaoff': {'script': scripts_path + 'quotaoff.sh', 'checker': self.check_quotas_status, 'args': {'status':{'user':'off','group':'off','project':'off'},'device':'all','quotatype':['user','group']} }, # todo: check/handle project quotas 
                 'quotarpc': {'script': scripts_path + 'quotarpc.sh', 'checker': self.check_rquota_active }
                 }
         if type not in types.keys():
@@ -1046,15 +1054,19 @@ class QuotaManager:
                     self.activate_script(types[type])
                 except:
                     max_errors = max_errors - 1
+            if max_errors == 0 and DEBUG:
+                import traceback
+                print("ERROR ACTIVATING '{}', '{}', '{}'".format(type,e,traceback.print_exc()))
 
     def activate_script(self, script):
         checker = script['checker']
         args = script['args'] if 'args' in script else None
         name = script['script']
         if args:
-            res = checker(args)
+            res = checker(**args)
         else:
             res = checker()
+
         if not res:
             if not os.path.isfile(name):
                 raise Exception('{} not found'.format(name))
@@ -1063,7 +1075,7 @@ class QuotaManager:
             except Exception as e:
                 raise Exception('Error calling {}'.format(name))
             if args:
-                res = checker(args)
+                res = checker(**args)
             else:
                 res = checker()
             if not res:
@@ -1157,18 +1169,20 @@ class QuotaManager:
                 if qm['mountpoint'] == mount:
                     fs = qm['fs']
                     done = True
+                    return True
         ret = None
         if not done:
             self.set_status_file(True)
             ret = self.set_mount_with_quota(fs)
             self.remount(mount)
             self.check_quotaon()
-            self.check_quotas_status('on',mount)
+            self.check_quotas_status(status={'user':'on','group':'on','project':'off'},device=mount,quotatype=['user','group'])
         return ret
 
     @proxy
     def stop_quotas(self):
-        return self.activate('quotaoff')
+        self.activate('quotaoff')
+        return self.check_quotaon()
 
     @proxy
     def start_quotas(self):
@@ -1191,7 +1205,7 @@ class QuotaManager:
 
     def periodic_actions(self):
         if self.get_status():
-            if not self.check_quotas_status('on'):
+            if not self.check_quotas_status(status={'user':'on','group':'on','project':'off'},device=mount,quotatype=['user','group']):
                 self.activate('quotaon')
             if not self.check_rquota_active():
                 self.activate('quotarpc')
@@ -1264,13 +1278,13 @@ def test_set_fs():
     print 'CHECK QUOTAON'
     print test.check_quotaon()
     print 'CHECK SERVER-SYNC ON {}'.format(mount)
-    print test.check_quotas_status('on',mount)
+    print test.check_quotas_status(status={'user':'on','group':'on','project':'off'},device=mount,quotatype=['user','group'])
     print 'UNSET SERVER-SYNC {}'.format(mount)
     print test.unset_mount_with_quota(mount)
     print 'CHECK QUOTAON (None)'
     print test.check_quotaon()
     print 'CHECK SD OFF {}'.format(fs)
-    print test.check_quotas_status('off',fs)
+    print test.check_quotas_status(status={'user':'off','group':'off','project':'off'},device=fs,quotatype=['user','group'])
     print 'SET SERVER-SYNC {}'.format(mount)
     print test.set_mount_with_quota(mount)
     print 'CHECK QUOTAON'
@@ -1278,9 +1292,9 @@ def test_set_fs():
     print 'N4D CALL'
     print test.n4d_cron(0)
     print 'CHECK SD ON {}'.format(fs)
-    print test.check_quotas_status('on',fs)
+    print test.check_quotas_status(status={'user':'on','group':'on','project':'off'},device=fs,quotatype=['user','group'])
     print 'CHECK SERVER-SYNC/ ON {}'.format(mount)
-    print test.check_quotas_status('on',mount)
+    print test.check_quotas_status(status={'user':'on','group':'on','project':'off'},device=mount,quotatype=['user','group'])
     print 'CHECK QUOTA USER ALUS01'
     print test.get_quota_user('alus01')
     print 'SET QUOTA USER ALUS01 = 100'
