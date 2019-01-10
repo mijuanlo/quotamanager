@@ -1207,7 +1207,7 @@ class QuotaManager:
 
     def periodic_actions(self):
         if self.get_status():
-            if not self.check_quotas_status(status={'user':'on','group':'on','project':'off'},device=mount,quotatype=['user','group']):
+            if not self.check_quotas_status(status={'user':'on','group':'on','project':'off'},device='all',quotatype=['user','group']):
                 self.activate('quotaon')
             if not self.check_rquota_active():
                 self.activate('quotarpc')
