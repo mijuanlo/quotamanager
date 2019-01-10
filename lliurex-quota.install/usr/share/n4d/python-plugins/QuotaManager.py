@@ -111,6 +111,8 @@ class QuotaManager:
     def detect_nfs_mount(self,mount='/net/server-sync'):
         try:
             nfsmounts = subprocess.check_output(['findmnt','-J','-t','nfs'])
+            if nfsmounts == '':
+                return None
             nfsmounts_obj = json.loads(nfsmounts)
             parsed_nfsmounts = [ x.get('target') for x in nfsmounts_obj.get('filesystems',[]) ]
             if mount and mount in parsed_nfsmounts:
