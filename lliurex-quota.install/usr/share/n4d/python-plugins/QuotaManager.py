@@ -70,6 +70,8 @@ class QuotaManager:
                     return func(self,*args,**kwargs)
                 else:
                     self.client = self.get_client()
+                    if not self.client:
+                        print('Couldn\'t create N4D client, aborting call ({})'.format(func.__name__))
                     if DEBUG:
                         print('running n4d mode with server {}'.format(self.n4d_server))
                     cparams=None
@@ -151,11 +153,14 @@ class QuotaManager:
         elif srv_ip in iplist: # is something like a server, dns 'server' is assigned to me
             if self.any_slave(iplist): # classroom range 10.3.X.X
                 if self.detect_nfs_mount(): # nfs mounted or not
-                    if self.check_ping('10.3.0.254'): # available
-                        type_client = 'slave'
-                        self.fake_client = False
-                    else: # not available
-                        raise Exception('Nfs master server is not reachable!')
+                    type_client = 'slave'
+                    self.fake_client = False
+                    #Moved to caller functions
+                    #if self.check_ping('10.3.0.254'): # available
+                    #    type_client = 'slave'
+                    #    self.fake_client = False
+                    #else: # not available
+                    #    raise Exception('Nfs master server is not reachable!')
                 else:
                     self.fake_client = True
                     type_client = 'independent'
@@ -173,17 +178,28 @@ class QuotaManager:
         return type_client
 
     def init_client(self):
-        type = self.detect_running_system()
+        try:
+            type = self.detect_running_system()
+        except Exception as e:
+            if DEBUG:
+                print('Exception initiating client, {}'.format(e))
         url = ''
+        reachable = True
         if type == 'master':
             url = 'fake'
         elif type == 'independent':
             url = 'fake'
         elif type == 'slave':
             url = 'https://10.3.0.254:9779'
+            if not self.check_ping('10.3.0.254'):
+                print('Nfs master server is not reachable!')
+                reachable = False
         else:
             try:
                 srv_ip = socket.gethostbyname('server')
+                if not self.check_ping(srv_ip):
+                    print('server {} is not reachable!'.format(srv_ip))
+                    reachable = False
             except:
                 srv_ip = None
             url = 'https://'+str(srv_ip)+':9779'
@@ -1222,7 +1238,7 @@ class QuotaManager:
         type = self.detect_running_system()
         if DEBUG:
             print('detected {}'.format(type))
-        if type == 'master' or type == 'independent':
+        if type and (type == 'master' or type == 'independent'):
             self.periodic_actions()
         return True
 
