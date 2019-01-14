@@ -25,7 +25,8 @@ if __name__=='__main__':
     g.add_argument('-co','--configure-serversync',metavar='',action='store_const',help='Configure server-sync to use quota system',const=True)
     g.add_argument('-de','--deconfigure-serversync',metavar='',action='store_const',help='Deconfigure server-sync without quota system',const=True)
 
-    g.add_argument('-gs','--get-status',metavar='',action='store_const',help='Get status of lliurex-quota system',const=True)
+    g.add_argument('-gs','--get-status',metavar='',action='store_const',help='Get status of lliurex-quota system (using proxied calls if needed)',const=True)
+    g.add_argument('-gls','--get-local-status',metavar='',action='store_const',help='Get status of lliurex-quota system locally',const=True)
     g.add_argument('-en','--set-enabled',metavar='',action='store_const',help='Enables lliurex-quota',const=True)
     g.add_argument('-di','--set-disabled',metavar='',action='store_const',help='Disables lliurex-quota',const=True)
 
@@ -102,6 +103,16 @@ if __name__=='__main__':
                 print(c.get_status(*arguments))
             except Exception as e:
                 print('Error rpc client not available, aborting, {}'.format(e))
+
+    if args.get_local_status:
+        if qm:
+            print(qm.get_local_status())
+        else:
+            try:
+                qm = QuotaManager()
+                print(qm.get_local_status())
+            except Exception as e:
+                print('QuotaManager not available!, {}'.format(e))
 
     if args.set_enabled:
         if c is None:

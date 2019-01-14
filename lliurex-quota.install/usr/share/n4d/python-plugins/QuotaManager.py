@@ -1110,7 +1110,6 @@ class QuotaManager:
             fp.write(str(st))
         return st
 
-
     def check_quotaon(self):
         try:
             out = subprocess.check_output(['quotaon','-pa'])
@@ -1251,6 +1250,15 @@ class QuotaManager:
     def get_status(self):
         return self.get_status_file()
 
+    def get_local_status(self):
+        ret = {}
+        ret['status_file'] = self.get_status_file()
+        ret['running_system'] = self.detect_running_system()
+        ret['use_nfs'] = self.detect_nfs_mount()
+        ret['status_serversync'],fs,mount = self.detect_status_folder('/net/server-sync')
+        ret['status_quotas'] = self.check_quotas_status(status={'user':'on','group':'on','project':'off'},device='all',quotatype=['user','group'])
+        return ret
+
     @proxy
     def get_quotafile(self):
         return self.get_quotas_file()
@@ -1260,18 +1268,34 @@ class QuotaManager:
         return self.set_status_file(status=status)
 
     @proxy
-    def configure_net_serversync(self):
+    def detect_status_folder(self,folder):
         qmounts = self.get_mounts_with_quota()
-        mount = '/net/server-sync'
+        mount=folder
         fs= '/'
-        fs,mount = self.detect_mount_from_path(mount)
+        fs,mount = self.detect_mount_from_path(folder)
         done=False
         if qmounts:
             for qm in qmounts:
                 if qm['mountpoint'] == mount:
                     fs = qm['fs']
                     done = True
-                    return True
+        return done,fs,mount
+
+    @proxy
+    def configure_net_serversync(self):
+        #qmounts = self.get_mounts_with_quota()
+        mount = '/net/server-sync'
+        fs= '/'
+        #fs,mount = self.detect_mount_from_path(mount)
+        #done=False
+        #if qmounts:
+        #    for qm in qmounts:
+        #        if qm['mountpoint'] == mount:
+        #            fs = qm['fs']
+        #            done = True
+        #            return True
+        done,fs,mount = self.detect_status_folder('/net/server-sync')
+
         ret = None
         if not done:
             self.set_status_file(True)
