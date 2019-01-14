@@ -6,8 +6,16 @@ from QuotaManager import QuotaManager
 
 import argparse
 import xmlrpclib
+import signal
+
+def exit(signum, frame):
+    print('{}Aborting...{}'.format('\r'*10,''))
+    sys.exit(1)
 
 if __name__=='__main__':
+
+    signal.signal(signal.SIGINT,exit)
+
     parser = argparse.ArgumentParser(description='Quota administration tool')
     parser.add_argument('-u','--user',metavar='USER',nargs=1,help='User with classroom admin privileges')
     parser.add_argument('-p','--password',metavar='PASSWORD',nargs=1,help='Password from user with classroom admin privileges')
@@ -37,7 +45,7 @@ if __name__=='__main__':
 
     c = None
     qm = None
-    
+
     if args.user and args.password:
         try:
             c = xmlrpclib.ServerProxy('https://localhost:9779') # all clients have n4d ? 
