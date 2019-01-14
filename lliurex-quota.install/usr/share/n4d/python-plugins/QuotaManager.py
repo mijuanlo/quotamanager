@@ -70,8 +70,12 @@ class QuotaManager:
                     return func(self,*args,**kwargs)
                 else:
                     self.client = self.get_client()
-                    if not self.client:
-                        print('Couldn\'t create N4D client, aborting call ({})'.format(func.__name__))
+                    try:
+                        self.client.listMethods()
+                    except ResponseNotReady as e:
+                        print('Couldn\'t create N4D client, aborting call ({}), {}'.format(func.__name__,e))
+                    except Exception as e:
+                        print('Couldn\'t create N4D client, aborting call ({}),{}'.format(func.__name__,r))
                     if DEBUG:
                         print('running n4d mode with server {}'.format(self.n4d_server))
                     cparams=None
