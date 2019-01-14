@@ -30,6 +30,9 @@ class QuotaManager:
         self.system_users = None
         self.get_client()
 
+    def set_credentials(self,user,pwd):
+        self.auth=(user,pwd)
+
     def get_client(self):
         if type(self.client) == type(None):
             self.client = self.init_client()
@@ -72,6 +75,10 @@ class QuotaManager:
                     self.client = self.get_client()
                     try:
                         self.client.listMethods()
+                        #
+                        # TODO: check and emit warning if method used it's not configured as xmlrpc call
+                        # missing into n4d conf file
+                        #
                     except ResponseNotReady as e:
                         print('Couldn\'t create N4D client, aborting call ({}), {}'.format(func.__name__,e))
                     except Exception as e:
@@ -118,7 +125,7 @@ class QuotaManager:
         try:
             nfsmounts = subprocess.check_output(['findmnt','-J','-t','nfs'])
             if nfsmounts == '':
-                return None
+                return False
             nfsmounts_obj = json.loads(nfsmounts)
             parsed_nfsmounts = [ x.get('target') for x in nfsmounts_obj.get('filesystems',[]) ]
             if mount and mount in parsed_nfsmounts:
@@ -212,7 +219,7 @@ class QuotaManager:
         if (url == 'fake'):
             return client
         try:
-            client = xmlrpclib.ServerProxy(url)
+            client = xmlrpclib.ServerProxy(url,allow_none=True)
             client.get_methods()
         except Exception as e:
             #raise Exception('Can\'t create xml client, {}, {}'.format(url,e))
@@ -1036,6 +1043,10 @@ class QuotaManager:
             raise Exception('Unknown unit when normalize')
         return value
 
+    @proxy
+    def check_active_quotas(self,mount):
+        return self.check_quotas_status(status={'user':'on','group':'on','project':'off'},device=mount,quotatype=['user','group'])
+
     def check_quotas_status(self, status=None, device='all', quotatype='all'):
         valid_types = ['user','group','project']
         if not status:
@@ -1109,7 +1120,6 @@ class QuotaManager:
         with open('/etc/lliurex-quota/status','w') as fp:
             fp.write(str(st))
         return st
-
 
     def check_quotaon(self):
         try:
@@ -1251,6 +1261,28 @@ class QuotaManager:
     def get_status(self):
         return self.get_status_file()
 
+    def get_local_status(self):
+        ret = {}
+        ret['running_system'] = self.detect_running_system()
+        ret['use_nfs'] = self.detect_nfs_mount()
+        try:
+            ret['status_serversync'],fs,mount = self.detect_status_folder('/net/server-sync')
+            try:
+                ret['status_quotas'] = self.check_active_quotas(fs)
+            except Exception as e:
+                ret['status_quotas'] = 'Fail checking if quotas are active on filesystem {}, {}'.format(fs,e)
+        except Exception as e:
+            ret['status_serversync']='Fail checking if /net/server-sync are configured, i will use \'all\' as device to check if quotas are active {}'.format(e)
+            try:
+                ret['status_quotas'] = self.check_active_quotas(fs)
+            except Exception as e2:
+                try:
+                    ret['status_quotas'] = self.check_active_quotas('all')
+                except Exception as e3:
+                    ret['status_quotas'] = 'Fail checking if quotas are active, {}, {}, {} '.format(e,e2,e3)
+        ret['status_file'] = self.get_status()
+        return ret
+
     @proxy
     def get_quotafile(self):
         return self.get_quotas_file()
@@ -1260,18 +1292,34 @@ class QuotaManager:
         return self.set_status_file(status=status)
 
     @proxy
-    def configure_net_serversync(self):
+    def detect_status_folder(self,folder):
         qmounts = self.get_mounts_with_quota()
-        mount = '/net/server-sync'
+        mount=folder
         fs= '/'
-        fs,mount = self.detect_mount_from_path(mount)
+        fs,mount = self.detect_mount_from_path(folder)
         done=False
         if qmounts:
             for qm in qmounts:
                 if qm['mountpoint'] == mount:
                     fs = qm['fs']
                     done = True
-                    return True
+        return (done,fs,mount)
+
+    @proxy
+    def configure_net_serversync(self):
+        #qmounts = self.get_mounts_with_quota()
+        mount = '/net/server-sync'
+        fs= '/'
+        #fs,mount = self.detect_mount_from_path(mount)
+        #done=False
+        #if qmounts:
+        #    for qm in qmounts:
+        #        if qm['mountpoint'] == mount:
+        #            fs = qm['fs']
+        #            done = True
+        #            return True
+        done,fs,mount = self.detect_status_folder('/net/server-sync')
+
         ret = None
         if not done:
             self.set_status_file(True)
