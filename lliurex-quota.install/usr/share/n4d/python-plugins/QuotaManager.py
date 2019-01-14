@@ -250,6 +250,7 @@ class QuotaManager:
         if not os.path.exists(ipath):
             raise Exception('Path not found')
         mounts = self.get_fstab_mounts()
+        out = None
         try:
             out = json.loads(subprocess.check_output(['findmnt','-J','-T',str(ipath)]))
             targetfs = out['filesystems'][0]['source']
@@ -273,16 +274,8 @@ class QuotaManager:
                     out.extend(m)
         return '\n'.join(out) if out else ''
 
-    def get_fstab_mounts(self):
+    def get_idx_mapping_blkid(self):
         out = []
-        other = []
-        with open('/etc/fstab','r') as fp:
-            for line in fp.readlines():
-                m = re.match(r'^\s*(?P<fs>[^#]\S+)\s+(?P<mountpoint>\S+)\s+(?P<type>\S+)\s+(?P<options>(?:[\S]+,)*[\S]+)\s+(?P<dump>\d)\s+(?P<pass>\d)\s*#?.*$',line.strip())
-                if m:
-                    out.append(m.groupdict())
-        if not out:
-            return None
         try:
             ids = subprocess.check_output(['blkid','-o','list'])
         except subprocess.CalledProcessError as e:
@@ -298,6 +291,72 @@ class QuotaManager:
             m = re.match(r'^(?P<fs>/\S+)\s+(?P<type>\S+)\s+(?P<mountpoint>\S+)\s+(?P<uuid>\S+)$',line)
             if m:
                 blklist.append(m.groupdict())
+        if not blklist:
+            raise Exception('Couldn\'t get block list uuids, maybe need run as superuser')
+        return blklist
+
+    def get_idx_mapping_lsblk(self):
+        out = []
+        try:
+            # each version of lsblk outputs distinct information, this is the safest method
+            ids = subprocess.check_output(['lsblk','-P','-o','KNAME,FSTYPE,MOUNTPOINT,UUID'])
+        except subprocess.CalledProcessError as e:
+            if hasattr(e,'output'):
+                ids = e.output.strip()
+            else:
+                raise Exception('Error trying to get block id\'s'.format(e))
+        except Exception as e:
+            raise Exception('Error trying to get block id\'s'.format(e))
+
+        ids = ids.strip().split('\n')
+        blklist = []
+        for line in ids:
+            m = re.match(r'^KNAME="(?P<fs>[^"]*)"\s+FSTYPE="(?P<type>[^"]*)"\s+MOUNTPOINT="(?P<mountpoint>[^"]*)"\s+UUID="(?P<uuid>[^"]*)"$',line)
+            if m:
+                dout = m.groupdict()
+                if 'uuid' in dout and dout['uuid'] != '':
+                    if dout['fs'][0:4] != '/dev':
+                        dout['fs'] = '/dev/' + dout['fs']
+                    blklist.append(dout)
+        if not blklist:
+            raise Exception('Couldn\'t get block list uuids, maybe the output format of lsblk ... has changed !!')
+        return blklist
+
+    def get_realname(self,devicelink):
+        out = []
+        try:
+            # each version of lsblk outputs distinct information, this is the safest method
+            realname = subprocess.check_output(['readlink','-f',str(devicelink)])
+        except subprocess.CalledProcessError as e:
+            if hasattr(e,'output'):
+                realname = e.output.strip()
+            else:
+                raise Exception('Error trying to get realname from {}, {}\'s'.format(devicelink,e))
+        except Exception as e:
+            raise Exception('Error trying to get realname from {}, {}'.format(devicelink,e))
+        try:
+            realname = realname.strip()
+        except:
+            pass
+        return realname
+
+    def get_fstab_mounts(self):
+        out = []
+        other = []
+        with open('/etc/fstab','r') as fp:
+            for line in fp.readlines():
+                m = re.match(r'^\s*(?P<fs>[^#]\S+)\s+(?P<mountpoint>\S+)\s+(?P<type>\S+)\s+(?P<options>(?:[\S]+,)*[\S]+)\s+(?P<dump>\d)\s+(?P<pass>\d)\s*#?.*$',line.strip())
+                if m:
+                    out.append(m.groupdict())
+        if not out:
+            return None
+        try:
+            blklist = self.get_idx_mapping_lsblk()
+        except Exception as e:
+            try:
+                blklist = self.get_idx_mapping_blkid()
+            except Exception as e2:
+                raise Exception('Couldn\'t get block id\'s !!\nlsblk says: {}\nblkid says: {}\n'.format(e,e2))
 
         for linefstab in out:
             if linefstab['fs'].lower()[0:4] == 'uuid':
@@ -306,7 +365,22 @@ class QuotaManager:
                         linefstab['fs'] = blk['fs']
                         linefstab['uuid'] = blk['uuid']
                         break
+
+                # check realname, lvm uses symlinks pointing to real kernel name
+                realnamefs = self.get_realname(linefstab['fs'])
+                if realnamefs == linefstab['fs']:
+                    linefstab['alias']=linefstab['fs']
+                else:
+                    linefstab['alias']=linefstab['fs']
+                    linefstab['fs']=realnamefs
             else:
+                # check realname, lvm uses symlinks pointing to real kernel name
+                realnamefs = self.get_realname(linefstab['fs'])
+                if realnamefs == linefstab['fs']:
+                    linefstab['alias']=linefstab['fs']
+                else:
+                    linefstab['alias']=linefstab['fs']
+                    linefstab['fs']=realnamefs
                 found = False
                 for blk in blklist:
                     if linefstab['fs'] == blk['fs']:
@@ -370,10 +444,13 @@ class QuotaManager:
             if mount[0:5].lower() == 'uuid=':
                 mount = mount[5:]
             for mountitem in all_mounts:
-                if mountitem['fs'] == os.path.normpath(mount) or mountitem['uuid'] == mount or mountitem['mountpoint'] == os.path.normpath(mount):
+                if mountitem['fs'] == os.path.normpath(mount) or mountitem['uuid'] == mount or mountitem['mountpoint'] == os.path.normpath(mount) or mountitem['alias'] == os.path.normpath(mount):
                     found = False
                     for qmount in quota_mounts:
                         if qmount['fs'] == mountitem['fs']:
+                            found = True
+                            break
+                        if qmount['fs'] == mountitem['alias']:
                             found = True
                             break
                     if found:
@@ -394,9 +471,9 @@ class QuotaManager:
             fp.write(comments+'\n')
             for target in nontargets:
                 if target['uuid']:
-                    fp.write('UUID={uuid}\t{mountpoint}\t{type}\t{options}\t{dump}\t{pass}\t # {fs}\n'.format(**target))
+                    fp.write('UUID={uuid}\t{mountpoint}\t{type}\t{options}\t{dump}\t{pass}\t # {fs} {alias}\n'.format(**target))
                 else:
-                    fp.write('{fs}\t{mountpoint}\t{type}\t{options}\t{dump}\t{pass}\n'.format(**target))
+                    fp.write('{alias}\t{mountpoint}\t{type}\t{options}\t{dump}\t{pass}\t # {uuid} {fs}\n'.format(**target))
             for target in targets:
                 newoptions = self.trim_quotas(target['options'])
                 for file in self.get_quota_files(target['options']):
@@ -406,9 +483,9 @@ class QuotaManager:
                 else:
                     target['options'] = newoptions
                 if target['uuid']:
-                    fp.write('UUID={uuid}\t{mountpoint}\t{type}\t{options}\t{dump}\t{pass}\t # {fs}\n'.format(**target))
+                    fp.write('UUID={uuid}\t{mountpoint}\t{type}\t{options}\t{dump}\t{pass}\t # {fs} {alias}\n'.format(**target))
                 else:
-                    fp.write('{fs}\t{mountpoint}\t{type}\t{options}\t{dump}\t{pass}\n'.format(**target))
+                    fp.write('{alias}\t{mountpoint}\t{type}\t{options}\t{dump}\t{pass}\t # {uuid} {fs}\n'.format(**target))
         ts = str(int(time.time()))
         for file in quotafiles:
             with open(file,'rb') as fpr:
@@ -441,7 +518,7 @@ class QuotaManager:
             if mount[0:5].lower() == 'uuid=':
                 mount = mount[5:]
             for mountitem in all_mounts:
-                if mountitem['fs'] == os.path.normpath(mount) or mountitem['uuid'] == mount or mountitem['mountpoint'] == os.path.normpath(mount):
+                if mountitem['fs'] == os.path.normpath(mount) or mountitem['uuid'] == mount or mountitem['mountpoint'] == os.path.normpath(mount) or mountitem['alias'] == os.path.normpath(mount):
                     targets.append(mountitem)
                     break
             if not targets:
@@ -513,11 +590,14 @@ class QuotaManager:
         if mount[0:5].lower() == 'uuid=':
             mount = mount[5:]
         for mountitem in all_mounts:
-            if mountitem['fs'] == os.path.normpath(mount) or mountitem['uuid'] == mount or mountitem['mountpoint'] == os.path.normpath(mount):
+            if mountitem['fs'] == os.path.normpath(mount) or mountitem['uuid'] == mount or mountitem['mountpoint'] == os.path.normpath(mount) or mountitem['alias'] == os.path.normpath(mount):
                 found = False
                 if quota_mounts:
                     for qmount in quota_mounts:
                         if qmount['fs'] == mountitem['fs']:
+                            found = True
+                            break
+                        if qmount['alias'] == mountitem['fs']:
                             found = True
                             break
                 if found:
@@ -541,13 +621,13 @@ class QuotaManager:
                 if target['uuid']:
                     fp.write('UUID={uuid}\t{mountpoint}\t{type}\t{options}\t{dump}\t{pass}\t # {fs}\n'.format(**target))
                 else:
-                    fp.write('{fs}\t{mountpoint}\t{type}\t{options}\t{dump}\t{pass}\n'.format(**target))
+                    fp.write('{alias}\t{mountpoint}\t{type}\t{options}\t{dump}\t{pass}\n'.format(**target))
             for target in targets:
                 target['options'] += ',usrjquota=aquota.user,grpjquota=aquota.group,jqfmt=vfsv0'
                 if target['uuid']:
                     fp.write('UUID={uuid}\t{mountpoint}\t{type}\t{options}\t{dump}\t{pass}\t # {fs}\n'.format(**target))
                 else:
-                    fp.write('{fs}\t{mountpoint}\t{type}\t{options}\t{dump}\t{pass}\n'.format(**target))
+                    fp.write('{alias}\t{mountpoint}\t{type}\t{options}\t{dump}\t{pass}\n'.format(**target))
         for target in targets:
             self.remount(target['mountpoint'])
         self.activate('quotaoff')
