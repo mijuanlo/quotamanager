@@ -212,7 +212,7 @@ class QuotaManager:
         if (url == 'fake'):
             return client
         try:
-            client = xmlrpclib.ServerProxy(url)
+            client = xmlrpclib.ServerProxy(url,allow_none=True)
             client.get_methods()
         except Exception as e:
             #raise Exception('Can\'t create xml client, {}, {}'.format(url,e))
@@ -1279,7 +1279,7 @@ class QuotaManager:
                 if qm['mountpoint'] == mount:
                     fs = qm['fs']
                     done = True
-        return done,fs,mount
+        return (done,fs,mount)
 
     @proxy
     def configure_net_serversync(self):
