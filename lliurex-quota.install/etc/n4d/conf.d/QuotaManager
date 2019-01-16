@@ -13,3 +13,5 @@ stop_quotas=adm,admin,admins
 start_quotas=adm,admin,admins
 deconfigure_net_serversync=adm,admin,admins
 get_quotafile=adm,admin,admins
+detect_status_folder=adm,admin,admins
+check_active_quotas=adm,admin,admins
